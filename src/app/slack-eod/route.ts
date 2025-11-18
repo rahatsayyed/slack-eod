@@ -75,8 +75,12 @@ async function handleEODRequest(dateParam?: string) {
   const labelSince = formatIstLabel(sinceIst);
   const labelUntil = formatIstLabel(untilIst);
 
-  console.log(`📅 Generating EOD for window: ${labelSince} → ${labelUntil} (IST)`);
-  console.log(`🔁 Using GitLab window: since=${sinceIso} until=${untilIso} (UTC)`);
+  console.log(
+    `📅 Generating EOD for window: ${labelSince} → ${labelUntil} (IST)`
+  );
+  console.log(
+    `🔁 Using GitLab window: since=${sinceIso} until=${untilIso} (UTC)`
+  );
 
   // ---------------------------------------------------------------------------
   // 1. Gather relevant branches:
@@ -116,7 +120,9 @@ async function handleEODRequest(dateParam?: string) {
         },
       }
     );
-    const mrBranches = mrRes.data.map((mr: any) => mr.source_branch).filter(Boolean);
+    const mrBranches = mrRes.data
+      .map((mr: any) => mr.source_branch)
+      .filter(Boolean);
     allBranches.push(...mrBranches);
   } catch (err: any) {
     console.warn("⚠️ Could not fetch MRs for branches:", err.message || err);
@@ -128,7 +134,12 @@ async function handleEODRequest(dateParam?: string) {
   // ---------------------------------------------------------------------------
   // 2. Collect commits authored by you across those branches in the since→until window
   // ---------------------------------------------------------------------------
-  let commits: Array<{ id: string; title: string; web_url: string; branch: string }> = [];
+  let commits: Array<{
+    id: string;
+    title: string;
+    web_url: string;
+    branch: string;
+  }> = [];
 
   const authorFilter = GITLAB_EMAIL || GITLAB_USERNAME;
   for (const branch of branches) {
@@ -149,13 +160,20 @@ async function handleEODRequest(dateParam?: string) {
 
       if (res.data?.length) {
         commits.push(
-          ...res.data.map((c: any) => ({ id: c.id, title: c.title, web_url: c.web_url, branch }))
+          ...res.data.map((c: any) => ({
+            id: c.id,
+            title: c.title,
+            web_url: c.web_url,
+            branch,
+          }))
         );
       }
     } catch (err: any) {
       // ignore 404 or permission errors for a branch; warn for others
       if (err.response?.status && err.response.status !== 404) {
-        console.warn(`⚠️ commits fetch failed for branch ${branch}: ${err.message || err}`);
+        console.warn(
+          `⚠️ commits fetch failed for branch ${branch}: ${err.message || err}`
+        );
       }
     }
   }
@@ -170,10 +188,12 @@ async function handleEODRequest(dateParam?: string) {
 
   console.log(`✅ Found ${commits.length} commits authored by you in window.`);
 
-  const commitLines = commits.map((c) => `• ${c.title} (${c.branch}) → ${c.web_url}`);
+  const commitLines = commits.map(
+    (c) => `• ${c.title} (${c.branch}) → ${c.web_url}`
+  );
 
   // ---------------------------------------------------------------------------
-  // 3. Fetch MRs authored by you in window
+  // 3. Fetch MRs authored by you in window (WITH DESCRIPTIONS)
   // ---------------------------------------------------------------------------
   let createdMRs: string[] = [];
   try {
@@ -189,7 +209,10 @@ async function handleEODRequest(dateParam?: string) {
         },
       }
     );
-    createdMRs = createdRes.data.map((mr: any) => `• ${mr.title} (${mr.web_url})`);
+    createdMRs = createdRes.data.map((mr: any) => {
+      const description = mr.description?.trim() || "No description provided";
+      return `• ${mr.title}\n  Description: ${description}\n  URL: ${mr.web_url}`;
+    });
   } catch (err: any) {
     console.warn("⚠️ Could not fetch created MRs:", err.message || err);
   }
@@ -208,7 +231,9 @@ async function handleEODRequest(dateParam?: string) {
         per_page: 100,
       },
     });
-    reviewedMRs = reviewedRes.data.map((mr: any) => `• ${mr.title} (${mr.web_url})`);
+    reviewedMRs = reviewedRes.data.map(
+      (mr: any) => `• ${mr.title} (${mr.web_url})`
+    );
   } catch (err: any) {
     console.warn("⚠️ Could not fetch reviewed MRs:", err.message || err);
   }
@@ -226,9 +251,6 @@ ${createdMRs.length ? createdMRs.join("\n") : "None"}
 MRs Reviewed:
 ${reviewedMRs.length ? reviewedMRs.join("\n") : "None"}
 `;
-
-  console.log("---- raw activity ----");
-  console.log(activity);
 
   // ---------------------------------------------------------------------------
   // 6. Summarize via OpenAI
@@ -256,15 +278,22 @@ No activity on gitlab".
     const aiResponse = await openai.chat.completions.create({
       model: AI_MODEL_NAME,
       messages: [
-        { role: "system", content: "You are a concise assistant generating daily developer EOD summaries." },
+        {
+          role: "system",
+          content:
+            "You are a concise assistant generating daily developer EOD summaries.",
+        },
         { role: "user", content: aiPrompt },
       ],
     });
     eodSummary = aiResponse.choices?.[0]?.message?.content?.trim() || activity;
   } catch (err: any) {
-    console.warn("⚠️ OpenAI summary failed, using raw activity:", err.message || err);
+    console.warn(
+      "⚠️ OpenAI summary failed, using raw activity:",
+      err.message || err
+    );
   }
-
+  console.log("generated eod summary");
   // ---------------------------------------------------------------------------
   // 7. Post to Slack (explicitly include the IST window in the Slack message so there's no ambiguity)
   // ---------------------------------------------------------------------------
