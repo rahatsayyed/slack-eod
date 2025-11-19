@@ -259,18 +259,29 @@ ${reviewedMRs.length ? reviewedMRs.join("\n") : "None"}
 Time window (IST): ${labelSince} → ${labelUntil}
 Raw activity:
 ${activity}
-Keep it short (3-6 bullets), action-oriented, and professional, no vague eod updates.
 
-Output format:
-*EOD UPDATE* (date)
-- main topic
-  - subtopic (if any)
-  - subtopic (if any)
-- main topic
-  - subtopic (if any)
+Instructions:
+1. Keep it short (3-6 bullets), action-oriented, and professional
+2. No vague updates - be specific about what was done
+3. Group related work together under main topics
+4. Use nested bullet points (with proper indentation using spaces) for subtopics
 
-if not any activity, say " *EOD UPDATE* 
-No activity on gitlab".
+IMPORTANT - Follow this exact format:
+
+*EOD UPDATE* (${labelSince.split(',')[0]})
+• Main accomplishment or feature area
+  ◦ Specific detail or subtask
+  ◦ Another specific detail
+• Another main accomplishment
+  ◦ Specific detail
+
+If there's no activity, respond with exactly:
+*EOD UPDATE*
+No activity on GitLab today.
+
+Use bullet point characters:
+- Main points: • (bullet)
+- Sub-points: ◦ (white bullet) with 2 spaces indentation
 `;
 
   let eodSummary = activity;
