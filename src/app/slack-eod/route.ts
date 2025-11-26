@@ -18,24 +18,8 @@ const openai = new OpenAI({ apiKey: AI_API_KEY, baseURL: AI_BASE_URL });
 const slack = new WebClient(SLACK_BOT_TOKEN);
 
 /**
- * Helpers: IST-aware date utilities
+ * Helpers: Proper date utilities for last 24 hours
  */
-function istNow(): Date {
-  // get current time in IST as a Date object
-  const now = new Date();
-  const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
-  return new Date(istString);
-}
-
-function istMidnightFromDateString(dateInput: string): Date {
-  // interpret YYYY-MM-DD as midnight IST
-  return new Date(`${dateInput}T00:00:00+05:30`);
-}
-
-function toIsoUTC(d: Date) {
-  return new Date(d.getTime()).toISOString();
-}
-
 function formatIstLabel(d: Date) {
   return d.toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata",
@@ -52,40 +36,40 @@ function formatIstLabel(d: Date) {
  * Core handler logic
  *
  * Behavior:
- * - If dateParam provided => treat as that IST day (since = YYYY-MM-DD 00:00 IST, until = +24h)
- * - Else => rolling last 24 hours in IST (since = now_ist - 24h, until = now_ist)
+ * - If dateParam provided => treat as that IST calendar day (midnight to midnight IST)
+ * - Else => rolling last 24 hours (now - 24h to now, in actual UTC)
  */
 async function handleEODRequest(dateParam?: string) {
-  // determine since / until in IST
-  let sinceIst: Date;
-  let untilIst: Date;
+  let sinceUtc: Date;
+  let untilUtc: Date;
+
   if (dateParam) {
-    // calendar day in IST
-    sinceIst = istMidnightFromDateString(dateParam);
-    untilIst = new Date(sinceIst.getTime() + 24 * 60 * 60 * 1000);
+    // Calendar day in IST: parse YYYY-MM-DD as IST midnight
+    const istMidnight = new Date(`${dateParam}T00:00:00+05:30`);
+    sinceUtc = istMidnight;
+    untilUtc = new Date(istMidnight.getTime() + 24 * 60 * 60 * 1000);
   } else {
-    // rolling last 24 hours (IST)
-    untilIst = istNow();
-    sinceIst = new Date(untilIst.getTime() - 24 * 60 * 60 * 1000);
+    // Rolling last 24 hours: just use current UTC time
+    untilUtc = new Date(); // Current time in UTC
+    sinceUtc = new Date(untilUtc.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
   }
 
-  const sinceIso = toIsoUTC(sinceIst); // for GitLab (UTC ISO)
-  const untilIso = toIsoUTC(untilIst);
+  const sinceIso = sinceUtc.toISOString();
+  const untilIso = untilUtc.toISOString();
 
-  const labelSince = formatIstLabel(sinceIst);
-  const labelUntil = formatIstLabel(untilIst);
+  // Format for display (IST timezone for human readability)
+  const labelSince = formatIstLabel(sinceUtc);
+  const labelUntil = formatIstLabel(untilUtc);
 
   console.log(
-    `📅 Generating EOD for window: ${labelSince} → ${labelUntil} (IST)`
+    `📅 Generating EOD for window: ${labelSince} → ${labelUntil} (displayed in IST)`
   );
   console.log(
     `🔁 Using GitLab window: since=${sinceIso} until=${untilIso} (UTC)`
   );
 
   // ---------------------------------------------------------------------------
-  // 1. Gather relevant branches:
-  //    - take branches with a latest commit in the recent window (we'll use 7 days relative to 'untilIst')
-  //    - also include source_branch for MRs updated within our since→until window (and a small margin)
+  // 1. Gather relevant branches
   // ---------------------------------------------------------------------------
   let allBranches: string[] = [];
 
@@ -95,8 +79,8 @@ async function handleEODRequest(dateParam?: string) {
       { headers: { "PRIVATE-TOKEN": GITLAB_TOKEN } }
     );
 
-    // active branches: use cutoff relative to 'untilIst'
-    const cutoff = new Date(untilIst.getTime() - 7 * 24 * 60 * 60 * 1000);
+    // Active branches: use cutoff relative to 'untilUtc'
+    const cutoff = new Date(untilUtc.getTime() - 7 * 24 * 60 * 60 * 1000);
 
     const activeBranches = branchesRes.data
       .filter((b: any) => b.commit && new Date(b.commit.created_at) > cutoff)
@@ -107,7 +91,7 @@ async function handleEODRequest(dateParam?: string) {
     console.warn("⚠️ Could not fetch branches:", err.message || err);
   }
 
-  // include MR source branches updated within our window (use updated_after/updated_before)
+  // Include MR source branches updated within our window
   try {
     const mrRes = await axios.get(
       `${GITLAB_API}/projects/${GITLAB_PROJECT_ID}/merge_requests`,
@@ -132,7 +116,7 @@ async function handleEODRequest(dateParam?: string) {
   console.log(`🌿 Branch candidates count: ${branches.length}`);
 
   // ---------------------------------------------------------------------------
-  // 2. Collect commits authored by you across those branches in the since→until window
+  // 2. Collect commits authored by you in the time window
   // ---------------------------------------------------------------------------
   let commits: Array<{
     id: string;
@@ -169,7 +153,6 @@ async function handleEODRequest(dateParam?: string) {
         );
       }
     } catch (err: any) {
-      // ignore 404 or permission errors for a branch; warn for others
       if (err.response?.status && err.response.status !== 404) {
         console.warn(
           `⚠️ commits fetch failed for branch ${branch}: ${err.message || err}`
@@ -178,7 +161,7 @@ async function handleEODRequest(dateParam?: string) {
     }
   }
 
-  // dedupe by commit id
+  // Dedupe by commit id
   const seen = new Set<string>();
   commits = commits.filter((c) => {
     if (seen.has(c.id)) return false;
@@ -218,7 +201,7 @@ async function handleEODRequest(dateParam?: string) {
   }
 
   // ---------------------------------------------------------------------------
-  // 4. Fetch MRs you reviewed in window (global endpoint supports reviewer filter)
+  // 4. Fetch MRs you reviewed in window
   // ---------------------------------------------------------------------------
   let reviewedMRs: string[] = [];
   try {
@@ -256,7 +239,7 @@ ${reviewedMRs.length ? reviewedMRs.join("\n") : "None"}
   // 6. Summarize via OpenAI
   // ---------------------------------------------------------------------------
   const aiPrompt = `Summarize the following GitLab activity into a concise EOD update for a Slack message.
-Time window (IST): ${labelSince} → ${labelUntil}
+Time window: ${labelSince} → ${labelUntil}
 Raw activity:
 ${activity}
 
@@ -268,7 +251,7 @@ Instructions:
 
 IMPORTANT - Follow this exact format:
 
-*EOD UPDATE* (${labelSince.split(',')[0]})
+*EOD UPDATE* (${labelSince.split(",")[0]})
 • Main accomplishment or feature area
   ◦ Specific detail or subtask
   ◦ Another specific detail
@@ -305,10 +288,11 @@ Use bullet point characters:
     );
   }
   console.log("generated eod summary");
+
   // ---------------------------------------------------------------------------
-  // 7. Post to Slack (explicitly include the IST window in the Slack message so there's no ambiguity)
+  // 7. Post to Slack
   // ---------------------------------------------------------------------------
-  const slackDateLabel = `${labelSince} → ${labelUntil}`; // human friendly
+  const slackDateLabel = `${labelSince} → ${labelUntil}`;
   const slackMessage = `${eodSummary}`;
 
   await slack.chat.postMessage({
