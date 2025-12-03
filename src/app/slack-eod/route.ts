@@ -239,33 +239,28 @@ ${reviewedMRs.length ? reviewedMRs.join("\n") : "None"}
   // 6. Summarize via OpenAI
   // ---------------------------------------------------------------------------
   const aiPrompt = `Summarize the following GitLab activity into a concise EOD update for a Slack message.
-Time window: ${labelSince} → ${labelUntil}
-Raw activity:
-${activity}
-
-Instructions:
-1. Keep it short (3-6 bullets), action-oriented, and professional
-2. No vague updates - be specific about what was done
-3. Group related work together under main topics
-4. Use nested bullet points (with proper indentation using spaces) for subtopics
-
-IMPORTANT - Follow this exact format:
-
+  Time window: ${labelSince} → ${labelUntil}
+  Raw activity:
+  ${activity}
+  
+  Instructions:
+  1. Keep it short (3–6 bullets), action-oriented, and professional.
+  2. No vague updates — be specific about what was done.
+  3. Group related work together under main topics.
+  4. Use nested unordered bullet points:
+  
+  IMPORTANT — Follow this exact output format:
+  
 *EOD UPDATE* (${labelSince.split(",")[0]})
-• Main accomplishment or feature area
-  ◦ Specific detail or subtask
-  ◦ Another specific detail
-• Another main accomplishment
-  ◦ Specific detail
-
-If there's no activity, respond with exactly:
-*EOD UPDATE*
-No activity on GitLab today.
-
-Use bullet point characters:
-- Main points: • (bullet)
-- Sub-points: ◦ (white bullet) with 2 spaces indentation
-`;
+- Main accomplishment or feature area
+  - Specific detail or subtask (if present)
+  - Another specific detail (if present)
+- Another main accomplishment
+  - Specific detail (if present)
+  
+  If there's no activity, respond exactly with:
+  *EOD UPDATE*
+  No activity on GitLab today.`;
 
   let eodSummary = activity;
   try {
