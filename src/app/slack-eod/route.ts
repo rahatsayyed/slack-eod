@@ -62,61 +62,14 @@ async function handleEODRequest(dateParam?: string) {
   const labelUntil = formatIstLabel(untilUtc);
 
   console.log(
-    `📅 Generating EOD for window: ${labelSince} → ${labelUntil} (displayed in IST)`
+    `📅 Generating EOD for window: ${labelSince} → ${labelUntil} (displayed in IST)`,
   );
   console.log(
-    `🔁 Using GitLab window: since=${sinceIso} until=${untilIso} (UTC)`
+    `🔁 Using GitLab window: since=${sinceIso} until=${untilIso} (UTC)`,
   );
 
   // ---------------------------------------------------------------------------
-  // 1. Gather relevant branches
-  // ---------------------------------------------------------------------------
-  let allBranches: string[] = [];
-
-  try {
-    const branchesRes = await axios.get(
-      `${GITLAB_API}/projects/${GITLAB_PROJECT_ID}/repository/branches?per_page=200`,
-      { headers: { "PRIVATE-TOKEN": GITLAB_TOKEN } }
-    );
-
-    // Active branches: use cutoff relative to 'untilUtc'
-    const cutoff = new Date(untilUtc.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-    const activeBranches = branchesRes.data
-      .filter((b: any) => b.commit && new Date(b.commit.created_at) > cutoff)
-      .map((b: any) => b.name);
-
-    allBranches.push(...activeBranches);
-  } catch (err: any) {
-    console.warn("⚠️ Could not fetch branches:", err.message || err);
-  }
-
-  // Include MR source branches updated within our window
-  try {
-    const mrRes = await axios.get(
-      `${GITLAB_API}/projects/${GITLAB_PROJECT_ID}/merge_requests`,
-      {
-        headers: { "PRIVATE-TOKEN": GITLAB_TOKEN },
-        params: {
-          updated_after: sinceIso,
-          updated_before: untilIso,
-          per_page: 100,
-        },
-      }
-    );
-    const mrBranches = mrRes.data
-      .map((mr: any) => mr.source_branch)
-      .filter(Boolean);
-    allBranches.push(...mrBranches);
-  } catch (err: any) {
-    console.warn("⚠️ Could not fetch MRs for branches:", err.message || err);
-  }
-
-  const branches = Array.from(new Set(allBranches.filter(Boolean)));
-  console.log(`🌿 Branch candidates count: ${branches.length}`);
-
-  // ---------------------------------------------------------------------------
-  // 2. Collect commits authored by you in the time window
+  // 1. Collect commits authored by you in the time window (using all refs)
   // ---------------------------------------------------------------------------
   let commits: Array<{
     id: string;
@@ -126,54 +79,40 @@ async function handleEODRequest(dateParam?: string) {
   }> = [];
 
   const authorFilter = GITLAB_EMAIL || GITLAB_USERNAME;
-  for (const branch of branches) {
-    try {
-      const res = await axios.get(
-        `${GITLAB_API}/projects/${GITLAB_PROJECT_ID}/repository/commits`,
-        {
-          headers: { "PRIVATE-TOKEN": GITLAB_TOKEN },
-          params: {
-            ref_name: branch,
-            since: sinceIso,
-            until: untilIso,
-            author: authorFilter,
-            per_page: 100,
-          },
-        }
-      );
+  try {
+    console.log(`Fetching commits for author: ${authorFilter}`);
 
-      if (res.data?.length) {
-        commits.push(
-          ...res.data.map((c: any) => ({
-            id: c.id,
-            title: c.title,
-            web_url: c.web_url,
-            branch,
-          }))
-        );
-      }
-    } catch (err: any) {
-      if (err.response?.status && err.response.status !== 404) {
-        console.warn(
-          `⚠️ commits fetch failed for branch ${branch}: ${err.message || err}`
-        );
-      }
+    // Fetch commits from all branches/refs in the time window
+    const res = await axios.get(
+      `${GITLAB_API}/projects/${GITLAB_PROJECT_ID}/repository/commits`,
+      {
+        headers: { "PRIVATE-TOKEN": GITLAB_TOKEN },
+        params: {
+          author: authorFilter,
+          order: "topo",
+          all: true,
+          since: sinceIso,
+          until: untilIso,
+          per_page: 100,
+        },
+      },
+    );
+
+    if (res.data?.length) {
+      commits = res.data.map((c: any) => ({
+        id: c.id,
+        title: c.title,
+        web_url: c.web_url,
+        branch: "", // Branch is ambiguous when fetching all refs, omitting from display
+      }));
     }
+  } catch (err: any) {
+    console.warn(`⚠️ commits fetch failed: ${err.message || err}`);
   }
-
-  // Dedupe by commit id
-  const seen = new Set<string>();
-  commits = commits.filter((c) => {
-    if (seen.has(c.id)) return false;
-    seen.add(c.id);
-    return true;
-  });
 
   console.log(`✅ Found ${commits.length} commits authored by you in window.`);
 
-  const commitLines = commits.map(
-    (c) => `• ${c.title} (${c.branch}) → ${c.web_url}`
-  );
+  const commitLines = commits.map((c) => `• ${c.title} → ${c.web_url}`);
 
   // ---------------------------------------------------------------------------
   // 3. Fetch MRs authored by you in window (WITH DESCRIPTIONS)
@@ -188,9 +127,10 @@ async function handleEODRequest(dateParam?: string) {
           author_id: GITLAB_USER_ID,
           updated_after: sinceIso,
           updated_before: untilIso,
+          scope: "all",
           per_page: 100,
         },
-      }
+      },
     );
     createdMRs = createdRes.data.map((mr: any) => {
       const description = mr.description?.trim() || "No description provided";
@@ -211,11 +151,12 @@ async function handleEODRequest(dateParam?: string) {
         reviewer_id: GITLAB_USER_ID,
         updated_after: sinceIso,
         updated_before: untilIso,
+        scope: "all",
         per_page: 100,
       },
     });
     reviewedMRs = reviewedRes.data.map(
-      (mr: any) => `• ${mr.title} (${mr.web_url})`
+      (mr: any) => `• ${mr.title} (${mr.web_url})`,
     );
   } catch (err: any) {
     console.warn("⚠️ Could not fetch reviewed MRs:", err.message || err);
@@ -279,7 +220,7 @@ ${reviewedMRs.length ? reviewedMRs.join("\n") : "None"}
   } catch (err: any) {
     console.warn(
       "⚠️ OpenAI summary failed, using raw activity:",
-      err.message || err
+      err.message || err,
     );
   }
   console.log("generated eod summary");
@@ -295,7 +236,11 @@ ${reviewedMRs.length ? reviewedMRs.join("\n") : "None"}
     text: slackMessage,
   });
 
-  return { ok: true, message: `EOD sent for window ${slackDateLabel}` };
+  return {
+    ok: true,
+    message: `EOD sent for window ${slackDateLabel}`,
+    eodSummary,
+  };
 }
 
 /**
