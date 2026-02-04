@@ -239,6 +239,7 @@ ${reviewedMRs.length ? reviewedMRs.join("\n") : "None"}
   return {
     ok: true,
     message: `EOD sent for window ${slackDateLabel}`,
+    time: { since: sinceIso, until: untilIso },
     eodSummary,
   };
 }
